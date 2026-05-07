@@ -7,7 +7,7 @@
     private
 
     type, extends(TCambComponent) :: TDarkEnergyModel
-        logical :: is_cosmological_constant = .true.
+        logical :: is_cosmological_constant = .false.      ! Beñat mod: used to be true
         integer :: num_perturb_equations = 0
     contains
     procedure :: Init
@@ -18,8 +18,8 @@
     procedure :: PerturbationEvolve
     procedure :: PrintFeedback
     ! do not have to implement w_de or grho_de if BackgroundDensityAndPressure is inherited directly
-    procedure :: w_de => TDarkEnergyModel_w_de
-    procedure :: grho_de => TDarkEnergyModel_grho_de
+    procedure :: w_de
+    procedure :: grho_de
     procedure :: Effective_w_wa !Used as approximate values for non-linear corrections
     end type TDarkEnergyModel
 
@@ -28,6 +28,10 @@
         real(dl) :: w_lam = -1_dl !p/rho for the dark energy (an effective value, used e.g. for halofit)
         real(dl) :: wa = 0._dl !may not be used, just for compatibility with e.g. halofit
         real(dl) :: cs2_lam = 1_dl !rest-frame sound speed, though may not be used
+        ! Beñat modification
+        real(dl) :: eta = 5._dl 
+        real(dl) :: eta_xd = 6.0_dl
+        ! Finish modification
         logical :: use_tabulated_w = .false.  !Use interpolated table; note this is quite slow.
         logical :: no_perturbations = .false. !Don't change this, no perturbations is unphysical
         !Interpolations if use_tabulated_w=.true.
@@ -40,31 +44,28 @@
     procedure :: w_de => TDarkEnergyEqnOfState_w_de
     procedure :: grho_de => TDarkEnergyEqnOfState_grho_de
     procedure :: Effective_w_wa => TDarkEnergyEqnOfState_Effective_w_wa
-#if defined(__GFORTRAN__) && (( __GNUC__ < 15 ) || ( __GNUC__ == 15 && __GNUC_MINOR__ < 2 ))
-    final :: TDarkEnergyEqnOfState_Free ! safer for gcc mem-leak bug
-#endif
     end type TDarkEnergyEqnOfState
 
     public TDarkEnergyModel, TDarkEnergyEqnOfState
     contains
 
-    function TDarkEnergyModel_w_de(this, a)
+    function w_de(this, a)
     class(TDarkEnergyModel) :: this
-    real(dl) :: TDarkEnergyModel_w_de, al
+    real(dl) :: w_de, al
     real(dl), intent(IN) :: a
 
-    TDarkEnergyModel_w_de = -1._dl
+    w_de = -1._dl
 
-    end function TDarkEnergyModel_w_de  ! equation of state of the PPF DE
+    end function w_de  ! equation of state of the PPF DE
 
-    function TDarkEnergyModel_grho_de(this, a)  !relative density (8 pi G a^4 rho_de /grhov)
+    function grho_de(this, a)  !relative density (8 pi G a^4 rho_de /grhov)
     class(TDarkEnergyModel) :: this
-    real(dl) :: TDarkEnergyModel_grho_de, al, fint
+    real(dl) :: grho_de, al, fint
     real(dl), intent(IN) :: a
 
-    TDarkEnergyModel_grho_de =0._dl
+    grho_de =0._dl
 
-    end function TDarkEnergyModel_grho_de
+    end function grho_de
 
     subroutine PrintFeedback(this, FeedbackLevel)
     class(TDarkEnergyModel) :: this
@@ -214,14 +215,18 @@
 
     end subroutine TDarkEnergyEqnOfState_Effective_w_wa
 
+    
+
     function TDarkEnergyEqnOfState_grho_de(this, a) result(grho_de) !relative density (8 pi G a^4 rho_de /grhov)
     class(TDarkEnergyEqnOfState) :: this
     real(dl) :: grho_de, al, fint
     real(dl), intent(IN) :: a
 
     if(.not. this%use_tabulated_w) then
-        grho_de = a ** (1._dl - 3. * this%w_lam - 3. * this%wa)
-        if (this%wa/=0) grho_de=grho_de*exp(-3. * this%wa * (1._dl - a))
+        ! Beñat modification
+        grho_de = a ** 4._dl * erf(this%eta * log(a) - this%eta_xd ) / erf(-this%eta_xd)      !grho_de = a ** (1._dl - 3. * this%w_lam - 3. * this%wa)
+        ! Finish modification
+        !if (this%wa/=0) grho_de=grho_de*exp(-3. * this%wa * (1._dl - a))
     else
         if(a == 0.d0)then
             grho_de = 0.d0      !assume rho_de*a^4-->0, when a-->0, OK if w_de always <0.
@@ -263,10 +268,14 @@
     if(.not. this%use_tabulated_w)then
         this%w_lam = Ini%Read_Double('w', -1.d0)
         this%wa = Ini%Read_Double('wa', 0.d0)
-        ! trap dark energy becoming important at high redshift
+        ! Beñat modiciation
+        this%eta = Ini%Read_Double('eta', 5.d0)
+        this%eta_xd = Ini%Read_Double('eta_xd', 6.d0)
+        ! Finish modification
+        ! trap dark energy becoming important at high redshift 
         ! (will still work if this test is removed in some cases)
         if (this%w_lam + this%wa > 0) &
-            error stop 'w + wa > 0, giving w>0 at high redshift'
+             error stop 'w + wa > 0, giving w>0 at high redshift'
     else
         call File%LoadTxt(Ini%Read_String('wafile'), table)
         call this%SetwTable(table(:,1),table(:,2), size(table(:,1)))
@@ -280,19 +289,10 @@
     class(TDarkEnergyEqnOfState), intent(inout) :: this
     class(TCAMBdata), intent(in), target :: State
 
-    this%is_cosmological_constant = .not. this%use_tabulated_w .and. &
-        &  abs(this%w_lam + 1._dl) < 1.e-6_dl .and. this%wa==0._dl
+    !this%is_cosmological_constant = .not. this%use_tabulated_w .and. &
+    !    &  abs(this%w_lam + 1._dl) < 1.e-6_dl .and. this%wa==0._dl
 
     end subroutine TDarkEnergyEqnOfState_Init
 
-#if defined(__GFORTRAN__) && defined(__GNUC__) && (( __GNUC__ < 15 ) || ( __GNUC__ == 15 && __GNUC_MINOR__ < 2 ))
-    subroutine TDarkEnergyEqnOfState_Free(this)
-    type(TDarkEnergyEqnOfState), intent(inout) :: this
-
-    call this%equation_of_state%Clear()
-    call this%logdensity%Clear()
-
-    end subroutine TDarkEnergyEqnOfState_Free
-#endif
 
     end module DarkEnergyInterface

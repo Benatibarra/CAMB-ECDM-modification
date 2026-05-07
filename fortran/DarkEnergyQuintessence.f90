@@ -49,7 +49,7 @@
     procedure :: BackgroundDensityAndPressure => TQuintessence_BackgroundDensityAndPressure
     procedure :: EvolveBackground
     procedure :: EvolveBackgroundLog
-    procedure, private :: phidot_start => TQuintessence_phidot_start
+    procedure, private :: phidot_start
     end type TQuintessence
 
     ! Specific implementation for early quintessence + cosmologial constant, assuming the early component
@@ -61,7 +61,7 @@
         real(dl) :: m = 5d-54 !m in reduced Planck mass units
         real(dl) :: theta_i = 3.1_dl !initial value of phi/f
         real(dl) :: frac_lambda0 = 1._dl !fraction of dark energy density that is cosmological constant today
-        logical :: use_zc = .true. !adjust m to fit zc
+        logical :: use_zc = .false. !adjust m to fit zc                                                               
         real(dl) :: zc, fde_zc !readshift for peak f_de and f_de at that redshift
         integer :: npoints = 5000 !baseline number of log a steps; will be increased if needed when there are oscillations
         integer :: min_steps_per_osc = 10
@@ -70,6 +70,7 @@
     procedure :: Vofphi => TEarlyQuintessence_VofPhi
     procedure :: Init => TEarlyQuintessence_Init
     procedure :: ReadParams =>  TEarlyQuintessence_ReadParams
+	procedure, private :: phidot_start => TEarlyQuintessence_Phidot_start
     procedure, nopass :: PythonClass => TEarlyQuintessence_PythonClass
     procedure, nopass :: SelfPointer => TEarlyQuintessence_SelfPointer
     procedure, private :: fdeAta
@@ -109,6 +110,15 @@
 
     end function VofPhi
 
+    function Phidot_start(this, phi)
+    class(TQuintessence) :: this
+    real(dl) phi,phidot_start
+
+    call MpiStop('Quintessence classes must override to provide Phidot_start')
+    Phidot_start = 0
+
+
+    end function Phidot_start
 
     subroutine TQuintessence_Init(this, State)
     class(TQuintessence), intent(inout) :: this
@@ -136,18 +146,17 @@
     real(dl), intent(in) :: grhov, a
     real(dl), intent(out) :: grhov_t
     real(dl), optional, intent(out) :: w
-    real(dl) V, a2, grhov_lambda, phi, phidot
+    real(dl) V, loga
 
     if (this%is_cosmological_constant) then
         grhov_t = grhov * a * a
         if (present(w)) w = -1_dl
     elseif (a >= this%astart) then
-        a2 = a**2
-        call this%ValsAta(a,phi,phidot)
-        V = this%Vofphi(phi,0)
-        grhov_t = phidot**2/2 + a2*V
+		loga = dlog(a)
+		V = this%Vofphi(loga, 0)
+        grhov_t = V * a * a
         if (present(w)) then
-            w = (phidot**2/2 - a2*V)/grhov_t
+            w = - this%Vofphi(loga, 1) / V / 3 - 1
         end if
     else
         grhov_t=0
@@ -178,30 +187,31 @@
     class(TQuintessence) :: this
     integer num
     real(dl) y(num),yprime(num)
-    real(dl) a, a2, tot
-    real(dl) phi, grhode, phidot, adot
+    real(dl) a!, a4, chi, tot
+!    real(dl) phi, p_phi, adotinv, grhode
 
-    a2=a**2
-    phi = y(1)
-    phidot = y(2)/a2
+!    a4 = a**4
+!    phi = y(1)
+!    p_phi = y(2) ! (chidot + 3*adot/a*chi)/a = a^-4 phidot
 
-    grhode=a2*(0.5d0*phidot**2 + a2*this%Vofphi(phi,0))
-    tot = this%state%grho_no_de(a) + grhode
-
-    adot=sqrt(tot/3.0d0)
-    yprime(1)=phidot/adot !d phi /d a
-    yprime(2)= -a2**2*this%Vofphi(phi,1)/adot
+!    chi = a**(-3) * phi
+!    grhode = a4 * (0.5d0 * p_phi**2 + this%Vofphi(chi, 0))
+!    tot = this%state%grho_no_de(a) + grhode
+	
+!    adotinv = 1 / sqrt(tot / 3.0d0)
+    yprime(1) = 0!a4 * p_phi * adotinv !d phi /d a
+    yprime(2) = 0!-a * this%Vofphi(chi, 1) * adotinv
 
     end subroutine EvolveBackground
 
 
-    real(dl) function TQuintessence_phidot_start(this,phi)
-    class(TQuintessence) :: this
-    real(dl) :: phi
+    function TEarlyQuintessence_Phidot_start(this, phi) result(Phidot_start)
+    class(TEarlyQuintessence) :: this
+    real(dl) :: phi, phidot_start
 
-    TQuintessence_phidot_start = 0
+    phidot_start = this%n
 
-    end function TQuintessence_phidot_start
+    end function TEarlyQuintessence_Phidot_start
 
     subroutine ValsAta(this,a,aphi,aphidot)
     class(TQuintessence) :: this
@@ -243,13 +253,11 @@
     real(dl), intent(in) :: ay(*)
     real(dl), intent(inout) :: ayprime(*)
     integer, intent(in) :: w_ix
-    real(dl) phi, phidot, clxq, vq
+    real(dl) gprhov_t
 
-    call this%ValsAta(a,phi,phidot)
-    clxq=ay(w_ix)
-    vq=ay(w_ix+1)
-    dgrhoe= phidot*vq +clxq*a**2*this%Vofphi(phi,1)
-    dgqe= k*phidot*clxq
+    gprhov_t = - a**2 * this%Vofphi(dlog(a), 1) / 3
+    dgrhoe = ay(w_ix) * gprhov_t!grhov_t * (1 + w) ! renormalized by (1 + w)
+    dgqe = ay(w_ix + 1) * gprhov_t!grhov_t * (1 + w)
 
     end subroutine TQuintessence_PerturbedStressEnergy
 
@@ -261,38 +269,40 @@
     real(dl), intent(inout) :: ayprime(:)
     real(dl), intent(in) :: a, adotoa, w, k, z, y(:)
     integer, intent(in) :: w_ix
-    real(dl) clxq, vq, phi, phidot
-
-    call this%ValsAta(a,phi,phidot) !wasting time calling this again..
-    clxq=y(w_ix)
-    vq=y(w_ix+1)
-    ayprime(w_ix)= vq
-    ayprime(w_ix+1) = - 2*adotoa*vq - k*z*phidot - k**2*clxq - a**2*clxq*this%Vofphi(phi,2)
+    real(dl) cs2_lamt3
+	cs2_lamt3 = this%Phidot_start(0.0_dl)  !interface reuse for parameter n. Probably not optimal given MPI call...
+    !density perturbation
+	! \delta_n = \delta / (1 + w)
+	! \delta_n' = \delta' / (1 + w) - \delta_n  w' / (1 + w)
+	! Vofphi(loga, 2) = dlog(V,loga)/dloga
+    ayprime(w_ix) = - adotoa * (3 + cs2_lamt3 + this%Vofphi(dlog(a), 2)) &
+	    * ( y(w_ix) + 3 * adotoa * y(w_ix + 1) / k) - k * (y(w_ix + 1) + z)
+    !velocity
+    ayprime(w_ix + 1) = -adotoa * (1 - cs2_lamt3) * y(w_ix + 1) + k * cs2_lamt3 / 3.0_dl * y(w_ix)
 
     end subroutine TQuintessence_PerturbationEvolve
 
     ! Early Quintessence example, axion potential from e.g. arXiv: 1908.06995
 
-    function TEarlyQuintessence_VofPhi(this, phi, deriv) result(V)
+    function TEarlyQuintessence_VofPhi(this, phi, deriv) result(VofPhi)
     !The input variable phi is sqrt(8*Pi*G)*psi
     !Returns (8*Pi*G)^(1-deriv/2)*d^{deriv}V(psi)/d^{deriv}psi evaluated at psi
     !return result is in 1/Mpc^2 units [so times (Mpc/c)^2 to get units in 1/Mpc^2]
     class(TEarlyQuintessence) :: this
-    real(dl) phi, V
+    real(dl) phi,Vofphi
     integer deriv
-    real(dl) theta, costheta
+!    real(dl) theta, costheta
     real(dl), parameter :: units = MPC_in_sec**2 /Tpl**2  !convert to units of 1/Mpc^2
 
     ! Assume f = sqrt(kappa)*f_theory = f_theory/M_pl
     ! m = m_theory/M_Pl
-    theta = phi/this%f
-    if (deriv==0) then
-        V = units*this%m**2*this%f**2*(1 - cos(theta))**this%n + this%frac_lambda0*this%State%grhov
-    else if (deriv ==1) then
-        V = units*this%m**2*this%f*this%n*(1 - cos(theta))**(this%n-1)*sin(theta)
+!    theta = phi/this%f
+    if (deriv ==1) then
+        Vofphi = this%State%grhov * 2 / sqrt(3.141592653589793d0) * this%frac_lambda0 * exp(- (this%frac_lambda0 * phi - this%m)**2 ) / erf(-this%m)
     else if (deriv ==2) then
-        costheta = cos(theta)
-        V = units*this%m**2*this%n*(1 - costheta)**(this%n-1)*(this%n*(1+costheta) -1)
+        Vofphi = -2 * (this%frac_lambda0 * phi - this%m) * this%frac_lambda0  ! dlog(V,loga)/dloga
+	else
+		Vofphi = this%State%grhov * erf(this%frac_lambda0 * phi - this%m ) / erf(-this%m)
     end if
 
     end function TEarlyQuintessence_VofPhi
@@ -324,7 +334,7 @@
 
     call this%TQuintessence%Init(State)
 
-    if (this%use_zc) then
+    if (.false.) then
         !Find underlying parameters m,f to give specified zc and fde_zc (peak early dark energy fraction)
         !Input m,f are used as starting values for search, which is done by brute force
         !(so should generalize easily, but not optimized for this specific potential)
@@ -440,15 +450,15 @@
     !
     !end if !Find initial
 
-    initial_phi = this%theta_i*this%f
+    initial_phi = this%astart**3 * this%theta_i * this%f ! phi = a**3 * chi = a**3 * theta_i * f
 
-    y(1)=initial_phi
-    initial_phidot =  this%astart*this%phidot_start(initial_phi)
-    y(2)= initial_phidot*this%astart**2
+    y(1) = initial_phi
+    initial_phidot =  this%astart * this%phidot_start(initial_phi)
+    y(2) = this%astart**(-4) * initial_phidot
 
-    phi_a(1)=y(1)
-    phidot_a(1)=y(2)/this%astart**2
-    sampled_a(1)=this%astart
+    phi_a(1) = y(1)
+    phidot_a(1) = this%astart**4 * y(2)
+    sampled_a(1) = this%astart
     da_osc = 1
     last_a = this%astart
     max_ix =0
@@ -463,8 +473,8 @@
         call dverk(this,NumEqs,EvolveBackgroundLog,afrom,y,aend,this%integrate_tol,ind,c,NumEqs,w)
         if (.not. this%check_error(exp(afrom), exp(aend))) return
         call EvolveBackgroundLog(this,NumEqs,aend,y,w(:,1))
-        phi_a(ix)=y(1)
-        phidot_a(ix)=y(2)/a2
+        phi_a(ix) = y(1)
+        phidot_a(ix) = a2 * a2 * y(2)
         if (i==1) then
             lastsign = y(2)
         elseif (y(2)*lastsign < 0) then
@@ -514,8 +524,8 @@
         call dverk(this,NumEqs,EvolveBackground,afrom,y,aend,this%integrate_tol,ind,c,NumEqs,w)
         if (.not. this%check_error(afrom, aend)) return
         call EvolveBackground(this,NumEqs,aend,y,w(:,1))
-        this%phi_a(ix)=y(1)
-        this%phidot_a(ix)=y(2)/a2
+        this%phi_a(ix) = y(1)
+        this%phidot_a(ix) = a2 * a2 * y(2)
 
         this%fde(ix) = 1/((this%state%grho_no_de(aend) +  this%frac_lambda0*this%State%grhov*a2**2) &
             /(a2*(0.5d0* this%phidot_a(ix)**2 + a2*this%Vofphi(y(1),0))) + 1)

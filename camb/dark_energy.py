@@ -32,13 +32,19 @@ class DarkEnergyEqnOfState(DarkEnergyModel):
         ("w", c_double, "w(0)"),
         ("wa", c_double, "-dw/da(0)"),
         ("cs2", c_double, "fluid rest-frame sound speed squared"),
+        # Beñat  modified
+        ("eta", c_double, "PPF transition width parameter (in log(a))"),
+        ("eta_xd", c_double, " Sign-Switching redshift for PPF transition (in log(1+z))"),
+        # Finish modification
         ("use_tabulated_w", c_bool, "using an interpolated tabulated w(a) rather than w, wa above"),
         ("__no_perturbations", c_bool, "turn off perturbations (unphysical, so hidden in Python)"),
     ]
 
     _methods_ = [("SetWTable", [numpy_1d, numpy_1d, POINTER(c_int)])]
 
-    def set_params(self, w=-1.0, wa=0, cs2=1.0):
+    # Beñat  modified
+    def set_params(self, w=-1.0, wa=0, cs2=1.0, eta=5, eta_xd=6):
+        # Finish  modified
         """
          Set the parameters so that P(a)/rho(a) = w(a) = w + (1-a)*wa
 
@@ -49,6 +55,10 @@ class DarkEnergyEqnOfState(DarkEnergyModel):
         self.w = w
         self.wa = wa
         self.cs2 = cs2
+        # Beñat  modified
+        self.eta = eta
+        self.eta_xd= eta_xd
+        # Finish  modified
         self.validate_params()
 
     def validate_params(self):
@@ -217,10 +227,11 @@ class EarlyQuintessence(Quintessence):
     ]
     _fortran_class_name_ = "TEarlyQuintessence"
 
-    def set_params(self, n, f=0.05, m=5e-54, theta_i=0.0, use_zc=True, zc=None, fde_zc=None):
+    def set_params(self, n, f=0.05, m=5e-54, theta_i=0.0, use_zc=True, zc=None, fde_zc=None, frac_lambda0=1.0):
         self.n = n
         self.f = f
         self.m = m
+        self.frac_lambda0 = frac_lambda0
         self.theta_i = theta_i
         self.use_zc = use_zc
         if use_zc:

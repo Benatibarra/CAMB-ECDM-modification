@@ -11,3 +11,4 @@ Non-linear models
 .. autoclass:: camb.nonlinear.SecondOrderPK
    :show-inheritance:
    :members:
+
